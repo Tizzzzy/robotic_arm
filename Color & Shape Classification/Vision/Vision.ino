@@ -1,0 +1,238 @@
+//After finishing the wiring, press the D5 button to run the code
+
+int inByte = 0,//serial buf
+    num = 0;//buf counter
+int x_openmv=0, y_openmv=0;
+int x_uarm=0, y_uarm=0;
+unsigned long times;
+char buf[20],
+     flag=0;
+int flag_y=0;
+int flag_r=0;
+int flag_g=0;
+int flag_b=0;
+int color_flag =0;
+char color_sel=1;// 0:yellow   1:red   2:green
+     
+unsigned char get_openmv_data();
+void pick_and_palce();
+
+void wait_for_finish_moving()//��ȡ��е�۷��صĲ�����ȷ����е���Ѿ��˶����
+{
+  inByte=0;//clear the buffer
+  while(inByte!='<'){
+     if (Serial2.available() > 0) {
+        inByte = Serial2.read();
+     }
+  }
+}
+
+void setup() {
+  pinMode(5,INPUT);//button
+  pinMode(LED_BUILTIN,OUTPUT);// led
+  digitalWrite(LED_BUILTIN,LOW);
+  Serial.begin(115200);//usb pc
+  Serial1.begin(115200);//openmv
+  Serial2.begin(115200);//uarm
+  Serial2.write(" m20\n");
+  Serial2.write("g90g01x202y0z143a0b0c0F1500\n");Serial2.write("m3s0m4e0\n");
+//if button is pressed, then start the program
+  while(digitalRead(5)==LOW);
+  digitalWrite(LED_BUILTIN,HIGH);
+  
+  Serial.write("VISION START!\n");
+  Serial2.write(" m20\n");
+  //Serial2.write("M2400 S0\n");//set the mode of uarm
+ // delay(4000);
+ // Serial2.write("M2400 S0\n");//set the mode of uarm
+ // Serial2.write("M2122 V1\n");//report when finish the movemnet
+
+
+  times = millis();
+}
+
+void loop() {
+  if(flag == 0)
+  {
+    digitalWrite(LED_BUILTIN,HIGH);//����
+    Serial2.write("g90g01x202y0z142a0b0c0F3000\n");// in order to trig the report of finish movement '@'��е���ƶ�����ʼλ��
+    wait_for_finish_moving();//
+
+    Serial2.write("g90g01x202y0z143a0b0c0F3000\n");
+    wait_for_finish_moving();
+    Serial2.write("m3s0m4e0\n");
+    delay(100);//wait for the uarm to finish the moving then start the vision tracking
+    
+    
+    flag = 1;//vision start
+    switch(color_sel){
+      case 0: Serial1.write('y');flag_y = 1;flag_r = 0;flag_g = 0;break;
+      case 1: Serial1.write('b');flag_r = 1;flag_y = 0;flag_g = 0;break;
+      case 2: Serial1.write('g');flag_g = 1;flag_r = 0;flag_y = 0;break;
+      case 3: Serial1.write('r');flag_b = 1;flag_r = 0;flag_g = 0;break;
+      default: break;
+    }
+    
+
+      
+    Serial1.write('S');//send vision start command
+    Serial.write("vision start for finding the cube\n");//send vision start command
+    times = millis();
+    
+  }
+  digitalWrite(LED_BUILTIN,LOW);//���
+  //get commands from pc
+  if (Serial.available() > 0) 
+  {
+    inByte = Serial.read();
+
+    Serial2.write(inByte);//�����Ե��Ե�ָ��ԭ��������е��
+  }
+  
+  //get object coordinates from openmv
+  unsigned char temp = 0;
+  temp = get_openmv_data();
+  if(temp==1)
+  {
+    flag = 0;//vision end
+    Serial.write("move\n");//confirm the openmv data
+
+//new algorithm
+    //x_uarm = y_openmv*(-0.7035)-3.635 + 88 + 70 + 200;
+    //y_uarm = x_openmv*(-0.7488)+12.391 + 107.5 + 15 +0;//����㷨������ͷ������ת��Ϊ��е��ִ��ʱ������
+    x_uarm = x_openmv*0.907+12;
+    y_uarm = y_openmv*0.93-2;
+    if(x_uarm<207)
+    y_uarm = y_uarm-5;
+    x_uarm = x_uarm-9;
+    //x_uarm = x_openmv*0.87;
+   // y_uarm = y_openmv*0.87;
+    
+    String commands="g90g01x"; 
+    commands.concat(x_uarm);//concat �����������������������顣
+    commands+="y";
+    commands.concat(-y_uarm);
+    commands+="z143a0b0c0F1500\n";
+    Serial2.print(commands);
+    
+    Serial.print(commands);
+
+    pick_and_palce(); 
+   
+    
+  }
+
+}
+
+//get object coordinates from openmv
+unsigned char get_openmv_data()
+{
+  if (Serial1.available() > 0) 
+  {
+
+    inByte = Serial1.read();
+    buf[num++] = inByte;
+    Serial.write(inByte);
+  
+    if((inByte=='\n')&&(buf[0]=='x'))
+    {
+      Serial.write("get openmv data\n");
+      int counters=1;//jump the letter x
+      x_openmv=0;
+      do{//���ｫ�ַ����͵���������ת��Ϊ���������
+        x_openmv = x_openmv*10;
+        x_openmv += buf[counters++] - 48;
+      }while((buf[counters]>=0x30)&&(buf[counters]<=0x39));//0x30��39���ö�Ӧ��AXC2��0��9
+      
+      y_openmv=0;
+      counters++;//jump the letter y
+      do{
+        y_openmv = y_openmv*10;
+        y_openmv += buf[counters++] - 48;
+      }while((buf[counters]>=0x30)&&(buf[counters]<=0x39));
+      counters++;
+      do{
+        color_flag = buf[counters++] - 48;
+      }while(counters+1<num);
+      
+      num = 0;
+      return 1;
+    }
+    //Serial.println(x_openmv,DEC);
+    //Serial.println(y_openmv,DEC);
+
+  }
+  if((millis()-times>2000)&&(flag==1))//if no object detected, reset the flag every 10s
+  {
+    //clear the uart buffers
+    while(Serial1.available() > 0)
+    {
+      inByte = Serial1.read();
+    }
+    //reset the count of uart
+    num = 0;
+     times = millis();
+     flag = 0;
+     Serial.write("status 1\n");//NO OBJECT IN CAMERA
+     color_sel++;
+  color_sel = color_sel%3;
+  }
+  return 0;
+}
+//move the detected object to the fixed position
+void pick_and_palce()
+{
+	
+	Serial.write("pick_and_palce!!!!\n");
+  Serial2.write("g90g01z50F3000\n");
+  delay(1000);
+  Serial2.write("g90g01z0F3000\n");
+  delay(1000);
+	Serial2.write("g90g01z-10F3000\n");
+	delay(1000);
+  Serial2.write("g90g01z-34F3000\n");
+  Serial2.write("m3s100m4e100\n");
+  delay(2000);
+  Serial2.write("g90g01z60F3000\n");
+  if(color_flag==1)
+  {
+    Serial.println("yellow!!!");
+  Serial2.write("g90g01x207y100z48a20b15.1c0F1500\n");//207.063,100.050,47.983,19.942,15.156,-0.034
+  wait_for_finish_moving();
+  delay(2000);
+  }
+  if(color_flag==2)//b
+  {
+    Serial.println("blue!!!");
+  Serial2.write("g90g01x212y45z48a20b15c0F1500\n");//212.080,34.997,48.037,19.997,14.986,0.264
+  wait_for_finish_moving();
+  delay(2000);
+
+  }
+  if(color_flag==4)
+  {
+  Serial.println("green!!!");
+  Serial2.write("g90g01x221.87y160.2z65a0b0c0F1500\n");//221.866,160.223,57.925,-0.017,0.277,-0.072
+  wait_for_finish_moving();
+  delay(2000);
+  }
+  
+  Serial2.write("m3s0m4e0\n");
+  
+  delay(1000);
+  Serial.println(flag_r);Serial.println(flag_y);Serial.println(flag_g);
+  //while(1);
+  /*Serial2.write("G0 Z23 F10000\n");//Z���½�
+  Serial2.write("M2231 V1\n");//������
+  Serial2.write("G0 Z120 F10000\n");//Z������
+  delay(500);
+  Serial2.write("G2202 N0 V15\n");//�ƶ����0�ŵ����15��
+  Serial2.write("G0 Z50 F10000\n");//Z���½�
+  Serial2.write("M2231 V0\n");//�ر�����
+  Serial2.write("G0 Z80 F10000\n");//Z������
+  Serial2.write("G2202 N0 V90\n");//�ƶ����0�ŵ����90��
+  delay(8000);//��ʱ8��*/
+  //change the color of tracking
+  color_sel++;
+  color_sel = color_sel%3;  
+}
